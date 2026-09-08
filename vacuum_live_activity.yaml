@@ -1,0 +1,297 @@
+blueprint:
+  name: Saugroboter Live Activity
+  description: >
+    Zeigt einen laufenden Saugroboter als Live Activity auf dem iPhone
+    (Sperrbildschirm + Dynamic Island, iOS 17.2+) bzw. als Live Update auf
+    Android 16+ an: Status als Titel, Fortschrittsbalken mit Farbverlauf
+    rot -> gruen, Flaeche und Akku als Textzeile.
+
+
+    Die Anzeige wird alle paar Minuten aktualisiert, solange der Sauger
+    faehrt. Ist er fertig, kommt eine Abschlussanzeige und die Mitteilung
+    raeumt sich nach einer einstellbaren Zeit selbst weg.
+
+
+    Funktioniert mit jeder Integration, die eine `vacuum.*`-Entitaet
+    liefert (Roborock, Dreame, Xiaomi, Ecovacs ...). Ein Fortschritts-Sensor
+    in Prozent wird benoetigt, alles Weitere ist optional.
+  domain: automation
+  homeassistant:
+    min_version: "2024.10.0"
+  input:
+    geraete:
+      name: Geräte
+      icon: mdi:robot-vacuum
+      input:
+        vacuum_entity:
+          name: Saugroboter
+          description: Die Vacuum-Entität des Roboters.
+          selector:
+            entity:
+              domain: vacuum
+        notify_device:
+          name: Handy
+          description: >
+            Das Gerät mit der Home-Assistant-App, das die Live Activity
+            anzeigen soll.
+          selector:
+            device:
+              integration: mobile_app
+        notify_service_override:
+          name: Notify-Dienst (optional)
+          description: >
+            Nur nötig, wenn der automatisch ermittelte Dienst nicht passt
+            (z. B. weil das Gerät in HA umbenannt wurde). Dann hier den
+            vollständigen Namen eintragen, etwa
+            notify.mobile_app_iphone_von_tobias.
+          default: ""
+          selector:
+            text:
+
+    sensoren:
+      name: Sensoren
+      icon: mdi:gauge
+      input:
+        progress_sensor:
+          name: Fortschritt
+          description: Sensor mit dem Reinigungsfortschritt in Prozent (0-100).
+          selector:
+            entity:
+              domain: sensor
+        status_sensor:
+          name: Status (optional)
+          description: >
+            Status-Sensor der Integration. Ohne Angabe wird der Zustand der
+            Vacuum-Entität für den Titel benutzt.
+          default: ""
+          selector:
+            entity:
+              domain: sensor
+        area_sensor:
+          name: Gereinigte Fläche (optional)
+          default: ""
+          selector:
+            entity:
+              domain: sensor
+        battery_sensor:
+          name: Akku (optional)
+          default: ""
+          selector:
+            entity:
+              domain: sensor
+
+    darstellung:
+      name: Darstellung
+      icon: mdi:palette
+      collapsed: true
+      input:
+        notification_tag:
+          name: Tag
+          description: >
+            Kennung der Mitteilung. Nur ändern, wenn mehrere Roboter
+            gleichzeitig angezeigt werden sollen - jeder braucht dann
+            seinen eigenen Tag.
+          default: vacuum-live-activity
+          selector:
+            text:
+        icon:
+          name: Symbol
+          default: mdi:robot-vacuum
+          selector:
+            icon:
+        icon_color:
+          name: Symbolfarbe
+          default: "#26C6DA"
+          selector:
+            text:
+        background_color:
+          name: Hintergrundfarbe
+          description: Hintergrund der Karte auf dem Sperrbildschirm.
+          default: "#101820"
+          selector:
+            text:
+        tap_url:
+          name: Ziel beim Antippen
+          description: >
+            Relativer Pfad in Home Assistant, z. B. /lovelace/0. Leer
+            lassen, um die Standardansicht zu öffnen.
+          default: "/lovelace/0"
+          selector:
+            text:
+
+    verhalten:
+      name: Verhalten
+      icon: mdi:cog
+      collapsed: true
+      input:
+        update_interval:
+          name: Aktualisierung
+          description: Wie oft die Anzeige während der Fahrt aktualisiert wird.
+          default: "/5"
+          selector:
+            select:
+              options:
+                - label: jede Minute
+                  value: "/1"
+                - label: alle 2 Minuten
+                  value: "/2"
+                - label: alle 5 Minuten
+                  value: "/5"
+                - label: alle 10 Minuten
+                  value: "/10"
+        clear_delay:
+          name: Abschlussanzeige stehen lassen
+          description: >
+            Wie lange die Fertig-Meldung nach dem Ende sichtbar bleibt,
+            bevor sie entfernt wird.
+          default:
+            hours: 0
+            minutes: 15
+            seconds: 0
+          selector:
+            duration:
+
+mode: parallel
+max: 10
+
+variables:
+  vacuum_entity: !input vacuum_entity
+  progress_sensor: !input progress_sensor
+  status_sensor: !input status_sensor
+  area_sensor: !input area_sensor
+  battery_sensor: !input battery_sensor
+  notify_device: !input notify_device
+  notify_service_override: !input notify_service_override
+  notification_tag: !input notification_tag
+  icon: !input icon
+  icon_color: !input icon_color
+  background_color: !input background_color
+  tap_url: !input tap_url
+
+  # Notify-Dienst: entweder manuell gesetzt oder aus dem Gerätenamen abgeleitet
+  notify_service: >-
+    {{ notify_service_override if notify_service_override
+       else 'notify.mobile_app_' ~ (device_attr(notify_device, 'name') | slugify) }}
+
+  progress_pct: "{{ states(progress_sensor) | int(0) }}"
+
+  # Titel: Status-Sensor bevorzugt, sonst der Zustand der Vacuum-Entität
+  title_text: >-
+    {% set m = {
+      'cleaning': 'Saugt',
+      'segment_cleaning': 'Saugt Räume',
+      'spot_cleaning': 'Spot-Reinigung',
+      'zoned_cleaning': 'Zonenreinigung',
+      'returning': 'Fährt zur Basis',
+      'returning_home': 'Fährt zur Basis',
+      'back_to_dock': 'Fährt zur Basis',
+      'going_to_wash_the_mop': 'Fährt zum Moppwaschen',
+      'washing_the_mop': 'Moppwäsche läuft',
+      'paused': 'Pausiert',
+      'charging': 'Lädt',
+      'docked': 'In der Station',
+      'idle': 'Wartet',
+      'error': 'Störung'
+    } %}
+    {%- set raw = states(status_sensor) if status_sensor else states(vacuum_entity) %}
+    {{ m.get(raw, raw | replace('_', ' ') | title) }}
+
+  # Textzeile aus den optionalen Sensoren zusammensetzen
+  info_text: >-
+    {% set parts = [] %}
+    {%- if area_sensor %}
+      {%- set parts = parts + [states(area_sensor) ~ ' ' ~ (state_attr(area_sensor, 'unit_of_measurement') or 'm²')] %}
+    {%- endif %}
+    {%- if battery_sensor %}
+      {%- set parts = parts + ['Akku ' ~ states(battery_sensor) ~ ' %'] %}
+    {%- endif %}
+    {{ parts | join(' · ') if parts else 'Reinigung läuft' }}
+
+triggers:
+  - trigger: state
+    entity_id: !input vacuum_entity
+    to:
+      - cleaning
+      - returning
+      - paused
+    id: update
+  - trigger: time_pattern
+    minutes: !input update_interval
+    id: update
+  - trigger: state
+    entity_id: !input vacuum_entity
+    to:
+      - docked
+      - idle
+      - error
+    for: "00:02:00"
+    id: fertig
+
+actions:
+  - choose:
+      # ------------------------------------------------------------------
+      - alias: Läuft - Live Activity starten bzw. aktualisieren
+        conditions:
+          - condition: trigger
+            id: update
+          - condition: state
+            entity_id: !input vacuum_entity
+            state:
+              - cleaning
+              - returning
+              - paused
+        sequence:
+          - action: "{{ notify_service }}"
+            data:
+              title: "{{ title_text }}"
+              message: "{{ info_text }}"
+              data:
+                tag: "{{ notification_tag }}"
+                live_update: true
+                url: "{{ tap_url }}"
+                critical_text: "{{ progress_pct }} %"
+                progress: "{{ progress_pct }}"
+                progress_max: 100
+                notification_icon: "{{ icon }}"
+                notification_icon_color: "{{ icon_color }}"
+                background_color: "{{ background_color }}"
+                progress_bar_color: >-
+                  {% set p = progress_pct | int(0) %}
+                  {% if p <= 50 %}
+                    {% set r = 255 %}
+                    {% set g = (59 + (p * (204 - 59) / 50)) | int %}
+                    {% set b = 0 %}
+                  {% else %}
+                    {% set r = (255 - ((p - 50) * (255 - 52) / 50)) | int %}
+                    {% set g = (204 + ((p - 50) * (121 - 204) / 50)) | int %}
+                    {% set b = (0 + ((p - 50) * (89 - 0) / 50)) | int %}
+                  {% endif %}
+                  {{ '#' ~ '%02X' % r ~ '%02X' % g ~ '%02X' % b }}
+
+      # ------------------------------------------------------------------
+      - alias: Fertig - Abschlussanzeige, danach aufräumen
+        conditions:
+          - condition: trigger
+            id: fertig
+        sequence:
+          - action: "{{ notify_service }}"
+            data:
+              title: Reinigung abgeschlossen
+              message: "{{ info_text }}"
+              data:
+                tag: "{{ notification_tag }}"
+                live_update: true
+                url: "{{ tap_url }}"
+                critical_text: Fertig
+                progress: 100
+                progress_max: 100
+                notification_icon: "{{ icon }}"
+                notification_icon_color: "#4CAF50"
+                background_color: "{{ background_color }}"
+                progress_bar_color: "#34C759"
+          - delay: !input clear_delay
+          - action: "{{ notify_service }}"
+            data:
+              message: clear_notification
+              data:
+                tag: "{{ notification_tag }}"
