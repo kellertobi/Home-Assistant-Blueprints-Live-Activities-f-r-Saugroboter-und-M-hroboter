@@ -1,0 +1,1 @@
+# Home-Assistant-Blueprints-Live-Activities-f-r-Saugroboter-und-M-hroboter
